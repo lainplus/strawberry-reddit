@@ -1,0 +1,66 @@
+#!/bin/sh
+
+# check for necessary programs
+for prog in dmenu jq feh; do
+	[ ! "$(which "$prog")" ] && echo "$prog is missing, install before running" && exit 1
+done
+
+# use echo to notify if notify-send is not installed for some reason
+[ ! "$(which notify-send)" ] && notifier="echo" || notifier="notify-send"
+
+# config directory
+configdir="${XDG_CONFIG_HOME:-$HOME/.config}/strawberry"
+
+# create ~/.config/strawberry if it doesnt exist
+[ ! -d "$configdir" ] && echo "directory $configdir does not exist, making one for you" && mkdir -p "$configdir"
+
+# default subreddit that will be inserted in subreddit.txt if it doesnt exist
+defaultsub="dankmemes"
+
+# create subreddit.txt if it doesnt exist
+[ ! -f "$configdir/subreddit.txt" ] && echo "$defaultsub" >> "$configdir/subreddit.txt"
+
+# if no argument is passed ask user to enter a subreddit
+if [ -z "$1" ]; then
+	subreddit=$(dmenu -p "select subreddit r/" -i -l 10 < "$configdir/subreddit.txt" | cut -d\| -f1 | awk '{$1=$1;print}')
+
+	[ -z "$subreddit" ] && exit 1
+
+else
+	subreddit="$1"
+fi
+
+# default dir to store the feed file and fetched images
+cachedir="/tmp/strawberry"
+
+# create cachedir
+if [ ! -d "$cachedir" ]; then
+	echo "$cachedir does not exist, making it for you"
+	mkdir -p "$cachedir"
+fi
+
+limit=100
+
+$notifier "strawberry" "picking out your images"
+
+# download the subreddit feed, containing only the first 100 entries
+# store it inside cachedir/tmp.json
+curl -H "user-agent: 'strawberry 1.0'" "https://www.reddit.com/r/$subreddit/hot.json?limit=$limit" > "$cachedir/tmp.json"
+
+# create a list of images
+imgs=$(jq '.' < "$cachedir/tmp.json" | grep url_overridden_by_dest | grep -Eo "http(s|)://.*(jpg|png)\b" | sort -u)
+
+# if there are no images, exit
+[ -z "$imgs" ] && $notifier "strawberry" "there are not any images on $subreddit, try again later" && exit 1
+
+# download images to $cachedir
+wget -P "$cachedir" $imgs
+
+# send a notification
+$notifier "strawberry" "download finished, enjoy"
+
+# display the images
+feh "$cachedir"
+
+# once done, flush out cache
+rm "${cachedir:?}"/*
